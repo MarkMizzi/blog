@@ -1,0 +1,40 @@
+baseURL = 'https://MarkMizzi.github.io/blog/'
+languageCode = 'en-us'
+title = ''
+theme = 'mainroad'
+paginate = "10" # Number of posts per page
+
+[markup]
+  [markup.highlight]
+    guessSyntax = false
+    style = 'manni'
+
+[Author]
+  name = "Mark Mizzi"
+
+[Params]
+  description = "A blog about databases, compilers and other interesting technology" # Description of your site
+  opengraph = true
+  twitter_cards = false
+  readmore = false # Show "Read more" button in list if true
+  pager = true
+  post_meta = ["date", "categories"] # Order of post meta information
+  mainSections = ["posts", "docs"]
+  googleFontsLink = "https://fonts.googleapis.com/css?family=IBM%20Plex%20Mono&display=swap"
+
+[Params.style.vars]
+  fontFamilyPrimary = "'IBM Plex Mono', mono"
+  fontFamilySecondary = "'IBM Plex Mono', mono"
+
+[Params.logo]
+  subtitle = "Just another site" # Logo subtitle
+
+[Params.sidebar]
+  home = "right"   # Configure layout for home page
+  list = "right"   # Configure layout for list pages
+  # Enable widgets in given order
+  widgets = ["search", "recent", "categories", "taglist"]
+
+[Params.widgets]
+  recent_num = 5 # Set the number of articles in the "Recent articles" widget
+  tags_counter = false # Enable counter for each tag in "Tags" widget (disabled by default)
