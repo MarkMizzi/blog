@@ -8,7 +8,7 @@ Postgres stores relations in a single, unorganized file called a heap file. This
 
 The atomic unit of disk access is an 8KB page. Each page has the following [structure](https://www.postgresql.org/docs/14/storage-page-layout.html):
 
-![Postgres heap page](/postgres_heap_page.png)
+![Postgres heap page](/postgres_heap_page.svg)
 
 Line pointers (or item ids) are used by other parts of the system to identify the rows in the page. Row datums contain all the data for a particular tuple. 
 
