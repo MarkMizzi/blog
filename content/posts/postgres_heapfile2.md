@@ -128,7 +128,7 @@ Since the row element can't be compressed effectively, its data is stored out of
 SELECT relname
 FROM pg_class
 WHERE oid = (
-    SELECT relTOASTrelid
+    SELECT reltoastrelid
     FROM pg_class
     WHERE relname = 'unary'
 );
@@ -150,7 +150,7 @@ yields
 
 So the inserted row element was split into chunks. `chunk_id` identifies the element being chunked, `chunk_seq` is a serial number assigned to chunks, and `chunk_data` contains the actual data itself.
 
-The actual contents of the `unary` table are:
+The contents of the `unary` table are:
 
 | a                                                  |
 |----------------------------------------------------|
