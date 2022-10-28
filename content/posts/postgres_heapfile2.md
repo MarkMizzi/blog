@@ -95,7 +95,7 @@ The two algorithms supported by default are `pglz` and `lz4` (since Postgres 14)
 
 It's worth noting that since Postgres compresses each element separately, the space savings tend to be lower than columnar databases which compress entire columns.
 
-Let's see an example of TOAST in practice. As an example we will use this simple table:
+Let's see an example of TOAST in practice. As our subject we'll use this simple table:
 
 ```sql
 CREATE TABLE unary(a VARCHAR);
@@ -148,7 +148,7 @@ yields
 | 16390    | 1         | 29b125f8597834fa83a4ea5d2f1c4608232e07d3aa3d998... |
 | 16390    | 2         | a77393dd069059b7ef840f0c74a814ec9237b6ecec5decc... |
 
-So the inserted row element was split into chunks. `chunk_id` identifies the element being chunked, `chunk_seq` is a serial number assigned to chunks, and `chunk_data` contains the actual data itself.
+So the inserted row element was split into 3 chunks. `chunk_id` identifies the element being chunked, `chunk_seq` is a serial number assigned to chunks, and `chunk_data` contains the actual data itself.
 
 The contents of the `unary` table are:
 
@@ -186,9 +186,9 @@ and returns
 |------------------------|----------------|
 | abcdabcdabcdabcdabc... | 38             |
 
-on my system. Wait, just 38 bytes? This is much smaller than the expected >2100 bytes, indicating that the row has been compressed and stored inline. (Sceptics can check the TOAST table to confirm that it is empty).
+Wait, just 38 bytes? This is much smaller than the expected >2100 bytes, indicating that the row has been compressed and stored inline. (Sceptics can check the TOAST table to confirm that it is empty).
 
-Now what happens if we insert a row that can't be compressed, or that even when compressed does not fit in an 8KB page?
+Now what happens if we insert a row that (even when compressed) can't fit in an 8KB page?
 
 Running
 
@@ -205,12 +205,90 @@ SELECT count(*) FROM pg_toast.pg_toast_16384;
 
 yields `5`. The system could not fit the inserted row inline, and resorted to out of line storage despite our instruction. 
 
-Running the same sequence of commands with `random_str(8100,...)` gives us `0`, indicating that (on my system, at least) the threshold for fitting a row in a page is somewhere between `8104` and `8204` bytes. This number is subject to change between Postgres releases, due to modifications to the page header or line pointer structure.
+Note that if we repeat the same exercise with the storage of `a` set to `PLAIN`, we get the following error:
+
+```txt
+ERROR: row is too big: size 8224, maximum size 8160
+```
 
 # How fast is TOAST?
 
 The performance enthusiasts among you may be shaking their heads in dismay. For every page we scan we may have to fetch many more pages containing chunks of out of line row elements: read amplification! Even worse, these pages are stored in the TOAST table, which is likely to be stored "far away" from the original relation on disk: random disk I/O!
 
-Clearly the worst case scenario here is a full scan of the heap file. How badly does TOAST affect performance in this case?
+Clearly the worst case scenario here is a full scan of the heap file. (If we're fetching only a few rows, we're probably using indexes anyway.) How badly does TOAST affect performance of a full scan?
 
 As a litmus test, let's reconsider the `unary` table.
+
+Our control subject is a `PLAIN` version of `unary`:
+
+```sql
+TRUNCATE unary;
+ALTER TABLE unary
+    ALTER COLUMN a SET STORAGE PLAIN;
+
+-- insert 10 million rows.
+-- Each row takes up 1 page, so we're inserting 8 KB * 10e6 = 80 GB.
+INSERT INTO unary
+SELECT repeat('a', 8000)
+FROM generate_series(0, 10000000);
+
+-- update planner statistics on the unary table.
+ANALYZE unary;
+
+EXPLAIN ANALYZE
+SELECT * FROM unary;
+```
+
+Note that 10 million rows occupy a lot more memory than the [default `shared_buffers`](https://www.postgresql.org/docs/current/runtime-config-resource.html) setting, so we can't point our fingers at the buffer cache when looking at performance figures. 
+
+Anyway here's the result from that query:
+
+```txt
+Seq Scan on unary  (cost=0.00..10100001.01 rows=10000001 width=8004) (actual time=0.200..76959.821 rows=10000001 loops=1)
+Planning Time: 0.067 ms
+Execution Time: 77294.513 ms
+```
+
+Repeating the same query on `unary` with the `STORAGE` of `a` set to `EXTERNAL`:
+
+```sql
+ALTER TABLE unary
+    ALTER COLUMN a SET STORAGE EXTERNAL;
+
+-- rebuilds table. Needed to actually store present rows out of line.
+-- Added ANALYZE to update table statistics
+VACUUM FULL ANALYZE unary;
+
+EXPLAIN ANALYZE
+SELECT * FROM unary;
+```
+
+we get
+
+```txt
+Seq Scan on unary  (cost=0.00..163695.01 rows=10000001 width=18) (actual time=0.048..506.440 rows=10000001 loops=1)
+Planning Time: 0.164 ms
+Execution Time: 712.174 ms
+```
+
+Wait, what? Using TOAST is far faster...what is going on? Actually this is a pitfall of `EXPLAIN ANALYZE`: it fetches TOAST pointers from `unary`'s heapfile, but doesn't detoast them. Typically values are detoasted on demand. In this case, we don't need them during query execution proper, so they remain TOASTed until Postgres has to send them to the client (which doesn't happen in an `EXPLAIN ANALYZE`).
+
+So in order to run our benchmark we need to open up a terminal. Let's use everyone's favourite Postgres command: `COPY`.
+
+```bash
+$ hyperfine "sudo -u postgres psql -c 'COPY unary TO STDOUT' -o /dev/null"
+Benchmark 1: sudo -u postgres psql -c 'COPY unary TO STDOUT' -o /dev/null
+  Time (mean ± σ):     106.450 s ±  0.576 s    [User: 0.003 s, System: 0.002 s]
+  Range (min … max):   105.251 s … 107.161 s    10 runs
+```
+
+and for the `EXTERNAL` version:
+
+```bash
+$ hyperfine "sudo -u postgres psql -c 'COPY unary TO STDOUT' -o /dev/null"
+Benchmark 1: sudo -u postgres psql -c 'COPY unary TO STDOUT' -o /dev/null
+  Time (mean ± σ):     157.218 s ±  0.596 s    [User: 0.004 s, System: 0.002 s]
+  Range (min … max):   156.579 s … 158.219 s    10 runs
+```
+
+So out of line storage incurs a 50% slowdown. Not great. Obviously these figures can vary widely depending on the size of TOASTed values. This case is the most extreme comparision, since for larger rows out of line storage is inevitable.
