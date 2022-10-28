@@ -213,11 +213,11 @@ ERROR: row is too big: size 8224, maximum size 8160
 
 # How fast is TOAST?
 
-The performance enthusiasts among you may be shaking their heads in dismay. For every page we scan we may have to fetch many more pages containing chunks of out of line row elements: read amplification! Even worse, these pages are stored in the TOAST table, which is likely to be stored "far away" from the original relation on disk: random disk I/O!
+The performance enthusiasts among you may be shaking their heads in dismay at the idea of out of line storage. For every page we scan we may have to fetch many more pages containing chunks of out of line row elements: read amplification! Even worse, these pages are stored in the TOAST table, which is likely to be stored "far away" from the original relation on disk: random disk I/O!
 
-Clearly the worst case scenario here is a full scan of the heap file. (If we're fetching only a few rows, we're probably using indexes anyway.) How badly does TOAST affect performance of a full scan?
+Is `EXTERNAL` storage a performance killer? 
 
-As a litmus test, let's reconsider the `unary` table.
+Clearly the worst case scenario here is a full scan of the heap file. (If we're fetching only a few rows, we're probably using indexes anyway.) As a litmus test, let's reconsider the `unary` table.
 
 Our control subject is a `PLAIN` version of `unary`:
 
@@ -273,7 +273,7 @@ Execution Time: 712.174 ms
 
 Wait, what? Using TOAST is far faster...what is going on? Actually this is a pitfall of `EXPLAIN ANALYZE`: it fetches TOAST pointers from `unary`'s heapfile, but doesn't detoast them. Typically values are detoasted on demand. In this case, we don't need them during query execution proper, so they remain TOASTed until Postgres has to send them to the client (which doesn't happen in an `EXPLAIN ANALYZE`).
 
-So in order to run our benchmark we need to open up a terminal. Let's use everyone's favourite Postgres command: `COPY`.
+So in order to run our benchmark we need to fire up `bash`. Let's use everyone's favourite Postgres command: `COPY`.
 
 ```bash
 $ hyperfine "sudo -u postgres psql -c 'COPY unary TO STDOUT' -o /dev/null"
@@ -292,3 +292,5 @@ Benchmark 1: sudo -u postgres psql -c 'COPY unary TO STDOUT' -o /dev/null
 ```
 
 So out of line storage incurs a 50% slowdown. Not great. Obviously these figures can vary widely depending on the size of TOASTed values. This case is the most extreme comparision, since for larger rows out of line storage is inevitable.
+
+Compression, on the other hand almost always speeds things up, as it reduces the number of pages that need to be loaded from disk.
